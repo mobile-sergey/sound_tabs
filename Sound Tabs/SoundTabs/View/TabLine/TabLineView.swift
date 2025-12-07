@@ -62,6 +62,12 @@ struct TabLineView: View {
                 TabEndBarsView(
                     viewModel: TabEndBarsViewModel(size: geometry.size)
                 )
+                
+                // Зелёная вертикальная линия для выделения ноты или воспроизведения
+                PlaybackLineView(
+                    viewModel: viewModel.createPlaybackLineViewModel(),
+                    geometry: geometry
+                )
             }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)

@@ -16,9 +16,32 @@ class ContentViewModel: ObservableObject {
     @Published var selectedFret: TabFret = TabFret(isSelected: false)
     @Published var metadata: TabMetadata = TabMetadata()
     @Published var chords: [Chord] = []
+    @Published var playbackState: PlaybackState
     
     init() {
         self.tabLines = [TabLine()]
+        // Позиция воспроизведения должна соответствовать первой позиции, где могут быть ноты
+        // Вычисляем нормализованную позицию с учётом отступов (как при создании ноты)
+        // Используем те же константы, что и в TabLineViewModel:
+        // startThinBarXPosition = 30
+        // timeSignatureWidth = 96
+        // spacing = 5
+        // startOffset = 30 + 96 + 5 = 131
+        // endOffset = 30
+        // Для стандартной ширины экрана iPhone (~375): 
+        // startOffset/width ≈ 131/375 ≈ 0.35
+        // Первая позиция (snappedPosition = 0): position = startOffset/width
+        // Используем примерное значение для стандартной ширины экрана
+        let screenWidth: CGFloat = 375 // Примерная ширина экрана iPhone
+        let startThinBarXPosition: CGFloat = 30
+        let timeSignatureWidth: CGFloat = 96
+        let spacing: CGFloat = 5
+        let startOffset = startThinBarXPosition + timeSignatureWidth + spacing
+        let initialPosition = Double(startOffset / screenWidth)
+        self.playbackState = PlaybackState(tabLineIndex: 0, position: initialPosition)
+        self.playbackState.tempo = metadata.tempo
+        self.playbackState.timeSignatureTop = metadata.sizeTop
+        self.playbackState.timeSignatureBottom = metadata.sizeBottom
     }
     
     func addTabLine() {
@@ -35,6 +58,12 @@ class ContentViewModel: ObservableObject {
             
             tabLines[lineIndex].strings[stringIndex].frets.append(newFret)
             selectedFret = newFret
+            
+            // Обновляем позицию воспроизведения на позицию новой ноты
+            playbackState.currentPosition.tabLineIndex = lineIndex
+            playbackState.currentPosition.position = position
+            // Триггерим обновление UI явно
+            playbackState.objectWillChange.send()
         }
     }
     
@@ -85,6 +114,25 @@ class ContentViewModel: ObservableObject {
                 }
             }
         }
+        
+        // Обновляем позицию воспроизведения на позицию выделенной ноты
+        // Находим таб, на котором находится выделенная нота
+        for (lineIndex, tabLine) in tabLines.enumerated() {
+            for string in tabLine.strings {
+                if string.frets.contains(where: { $0.id == fret.id }) {
+                    // Обновляем позицию воспроизведения на позицию выделенной ноты
+                    // Это позволяет продолжить воспроизведение с новой позиции
+                    // Обновляем напрямую свойства, чтобы сохранить тот же id и не сломать подписки
+                    playbackState.currentPosition.tabLineIndex = lineIndex
+                    playbackState.currentPosition.position = fret.position
+                    // Триггерим обновление UI явно
+                    playbackState.objectWillChange.send()
+                    // НЕ останавливаем воспроизведение - оно должно продолжаться с новой позиции
+                    // Если воспроизведение было на паузе, оно останется на паузе, но позиция обновится
+                    return
+                }
+            }
+        }
     }
     
     func deselectAllFrets() {
@@ -122,6 +170,18 @@ class ContentViewModel: ObservableObject {
             self.updateFret(fret)
             toolbarViewModel.selectedFret = self.selectedFret
         }
+        
+        toolbarViewModel.onTogglePlayPause = { [weak self] in
+            self?.togglePlayback()
+        }
+        
+        toolbarViewModel.onSave = { [weak self] in
+            self?.saveData()
+        }
+        
+        toolbarViewModel.onLoad = { [weak self] in
+            self?.loadData()
+        }
     }
     
     func createTabLineContainerViewModel(
@@ -142,11 +202,91 @@ class ContentViewModel: ObservableObject {
     
     func updateTempo(_ newTempo: Int) {
         metadata.tempo = newTempo
+        playbackState.updateMetadata(tempo: newTempo, timeSignatureTop: metadata.sizeTop, timeSignatureBottom: metadata.sizeBottom)
     }
     
     func updateTimeSignature(top: Int, bottom: Int) {
         metadata.sizeTop = top
         metadata.sizeBottom = bottom
+        playbackState.updateMetadata(tempo: metadata.tempo, timeSignatureTop: top, timeSignatureBottom: bottom)
+    }
+    
+    /// Находит последнюю ноту во всех табах
+    func findLastNotePosition() -> (tabLineIndex: Int, position: Double)? {
+        var lastTabIndex = -1
+        var lastPosition: Double = 0.0
+        
+        for (tabIndex, tabLine) in tabLines.enumerated() {
+            for string in tabLine.strings {
+                for fret in string.frets {
+                    if tabIndex > lastTabIndex || (tabIndex == lastTabIndex && fret.position > lastPosition) {
+                        lastTabIndex = tabIndex
+                        lastPosition = fret.position
+                    }
+                }
+            }
+        }
+        
+        if lastTabIndex >= 0 {
+            return (lastTabIndex, lastPosition)
+        }
+        
+        return nil
+    }
+    
+    func togglePlayback() {
+        if playbackState.isPlaying {
+            playbackState.pausePlayback()
+        } else {
+            // Если есть выделенная нота, начинаем воспроизведение с её позиции
+            // Позиция уже обновлена в selectFret, но на всякий случай обновим здесь тоже
+            if selectedFret.isSelected {
+                // Находим таб, на котором находится выделенная нота
+                var foundTabIndex = playbackState.currentPosition.tabLineIndex
+                for (lineIndex, tabLine) in tabLines.enumerated() {
+                    for string in tabLine.strings {
+                        if string.frets.contains(where: { $0.id == selectedFret.id }) {
+                            foundTabIndex = lineIndex
+                            break
+                        }
+                    }
+                }
+                // Обновляем позицию воспроизведения на позицию выделенной ноты
+                // Обновляем напрямую свойства, чтобы сохранить тот же id
+                playbackState.currentPosition.tabLineIndex = foundTabIndex
+                playbackState.currentPosition.position = selectedFret.position
+                // Триггерим обновление UI
+                playbackState.objectWillChange.send()
+            }
+            // Иначе используем текущую позицию воспроизведения (которая уже может быть обновлена)
+            
+            // Находим последнюю ноту
+            let lastNote = findLastNotePosition()
+            let lastTabIndex = lastNote?.tabLineIndex ?? (tabLines.count - 1)
+            let lastPosition = lastNote?.position ?? 1.0
+            
+            playbackState.startPlayback(
+                totalTabLines: tabLines.count,
+                lastNoteTabIndex: lastTabIndex,
+                lastNotePosition: lastPosition,
+                onPositionUpdate: { [weak self] position in
+                    // Позиция уже обновлена в таймере через objectWillChange
+                    // Здесь просто синхронизируем, если нужно
+                    // Но лучше не обновлять, так как это может создать конфликт
+                },
+                onComplete: { [weak self] in
+                    self?.playbackState.isPlaying = false
+                }
+            )
+        }
+    }
+    
+    func saveData() {
+        // TODO: Реализовать сохранение
+    }
+    
+    func loadData() {
+        // TODO: Реализовать загрузку
     }
 }
 

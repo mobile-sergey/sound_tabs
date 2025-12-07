@@ -36,6 +36,9 @@ struct ContentView: View {
             .onChange(of: viewModel.selectedFret) { _ in
                 toolbarViewModel.selectedFret = viewModel.selectedFret
             }
+            .onChange(of: viewModel.playbackState.isPlaying) { isPlaying in
+                toolbarViewModel.isPlaying = isPlaying
+            }
     }
     
     private var scrollSection: some View {

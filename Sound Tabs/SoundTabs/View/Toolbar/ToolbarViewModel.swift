@@ -13,12 +13,29 @@ import SwiftUI
 @MainActor
 class ToolbarViewModel: ObservableObject {
     @Published var selectedFret: TabFret
+    @Published var isPlaying: Bool = false
     
     var onDeleteFret: (() -> Void)?
     var onUpdateFret: ((Int) -> Void)?
+    var onTogglePlayPause: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onLoad: (() -> Void)?
     
     init(selectedFret: TabFret) {
         self.selectedFret = selectedFret
+    }
+    
+    func togglePlayPause() {
+        isPlaying.toggle()
+        onTogglePlayPause?()
+    }
+    
+    func save() {
+        onSave?()
+    }
+    
+    func load() {
+        onLoad?()
     }
     
     func deleteFret() {

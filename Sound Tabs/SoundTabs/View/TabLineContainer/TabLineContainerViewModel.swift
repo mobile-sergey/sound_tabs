@@ -53,7 +53,8 @@ class TabLineContainerViewModel: ObservableObject {
             tabLineIndex: index,
             parentViewModel: parentViewModel,
             metadata: metadata,
-            isFirstTab: isFirstTab
+            isFirstTab: isFirstTab,
+            playbackState: parentViewModel.playbackState
         )
     }
 }

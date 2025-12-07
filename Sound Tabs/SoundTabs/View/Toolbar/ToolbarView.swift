@@ -15,6 +15,30 @@ struct ToolbarView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
+                // Кнопки управления воспроизведением и экспорта/импорта
+                HStack(spacing: 16) {
+                    // Кнопка Play/Pause
+                    Button(action: viewModel.togglePlayPause) {
+                        Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    // Кнопка Save
+                    Button(action: viewModel.save) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    // Кнопка Load
+                    Button(action: viewModel.load) {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                    }
+                }
+                
                 Spacer()
                 
                 Button(action: viewModel.deleteFret) {

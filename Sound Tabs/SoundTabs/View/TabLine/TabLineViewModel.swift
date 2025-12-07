@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import Combine
 
 /// ViewModel для одной строки табулатуры, управляющая обработкой тапов, созданием нот и созданием дочерних ViewModels.
 /// Обрабатывает взаимодействия пользователя с табом (тапы, двойные тапы) и создает ViewModels для струн и размера такта.
@@ -25,19 +26,47 @@ class TabLineViewModel: ObservableObject {
     var metadata: TabMetadata?
     var isFirstTab: Bool = false
     var timeSignatureWidth: CGFloat = 96 // Ширина размера такта: точки (8) + ширина 2-значного числа (80) + отступ (8)
+    var playbackState: PlaybackState?
+    private var cancellables = Set<AnyCancellable>()
     
     init(
         tabLine: TabLine,
         tabLineIndex: Int = 0,
         parentViewModel: ContentViewModel? = nil,
         metadata: TabMetadata? = nil,
-        isFirstTab: Bool = false
+        isFirstTab: Bool = false,
+        playbackState: PlaybackState? = nil
     ) {
         self.tabLine = tabLine
         self.tabLineIndex = tabLineIndex
         self.parentViewModel = parentViewModel
         self.metadata = metadata
         self.isFirstTab = isFirstTab
+        self.playbackState = playbackState
+        
+        // Подписываемся на изменения playbackState для обновления UI
+        if let playback = playbackState {
+            playback.$currentPosition
+                .sink { [weak self] _ in
+                    self?.objectWillChange.send()
+                }
+                .store(in: &cancellables)
+            
+            playback.$isPlaying
+                .sink { [weak self] _ in
+                    self?.objectWillChange.send()
+                }
+                .store(in: &cancellables)
+        }
+        
+        // Подписываемся на изменения selectedFret для обновления зелёной линии
+        if let parentVM = parentViewModel {
+            parentVM.$selectedFret
+                .sink { [weak self] _ in
+                    self?.objectWillChange.send()
+                }
+                .store(in: &cancellables)
+        }
     }
     
     func handleTap(at location: CGPoint, in geometry: GeometryProxy) {
@@ -215,6 +244,14 @@ class TabLineViewModel: ObservableObject {
                 self?.parentViewModel?.updateTimeSignature(top: top, bottom: bottom)
             },
             onFocusChange: onFocusChange
+        )
+    }
+    
+    func createPlaybackLineViewModel() -> PlaybackLineViewModel {
+        return PlaybackLineViewModel(
+            playbackState: playbackState,
+            parentViewModel: parentViewModel,
+            tabLineIndex: tabLineIndex
         )
     }
     
