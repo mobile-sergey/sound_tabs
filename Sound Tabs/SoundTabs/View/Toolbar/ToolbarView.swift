@@ -53,7 +53,7 @@ struct ToolbarView: View {
             .padding(.bottom)
             .background(Color(.systemBackground)) // Адаптируется к темному/светлому режиму
             
-            // Панель выбора номера лада (0-24) - всегда видима
+            // Панель выбора номера лада (0-24) или длины такта - всегда видима
             ScrollView(.horizontal, showsIndicators: false) {
                 if viewModel.shouldShowFretSelector {
                     HStack(spacing: 10) {
@@ -85,11 +85,41 @@ struct ToolbarView: View {
                         }
                     }
                     .padding(.horizontal)
+                } else if viewModel.shouldShowMeasureDurationSelector {
+                    HStack(spacing: 10) {
+                        ForEach(MeasureDuration.allCases, id: \.self) { duration in
+                            Button(action: {
+                                viewModel.updateMeasureDuration(duration)
+                            }) {
+                                ZStack {
+                                    // Фон для выделенной длины - белый в светлом режиме, черный в темном
+                                    if viewModel.isMeasureDurationSelected(duration) {
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .fill(Color(.systemBackground)) // Белый в светлом, черный в темном
+                                            .frame(width: 40, height: 24)
+                                    }
+                                    
+                                    // Оранжевый квадрат для выделенной длины (всегда ярко оранжевый)
+                                    if viewModel.isMeasureDurationSelected(duration) {
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .fill(Color.orange)
+                                            .frame(width: 40, height: 24)
+                                    }
+                                    
+                                    Text(duration.displayString)
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundColor(.primary) // Адаптируется к темному/светлому режиму
+                                }
+                                .frame(width: 50, height: 40)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
                 } else {
-                    // Пустая панель с надписью, когда нота не выбрана
+                    // Пустая панель с надписью, когда нота или такт не выбраны
                     HStack {
                         Spacer()
-                        Text("Выберите ноту для изменения")
+                        Text("Выберите ноту или такт для изменения")
                             .font(.system(size: 14))
                             .foregroundColor(.secondary) // Адаптируется к темному/светлому режиму
                         Spacer()

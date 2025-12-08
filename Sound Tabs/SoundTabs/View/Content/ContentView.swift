@@ -16,7 +16,7 @@ struct ContentView: View {
     
     init() {
         let contentVM = ContentViewModel()
-        let toolbarVM = ToolbarViewModel(selectedFret: contentVM.selectedFret)
+        let toolbarVM = ToolbarViewModel(selectedFret: contentVM.selectedFret, selectedMeasureBar: contentVM.selectedMeasureBar)
         _viewModel = StateObject(wrappedValue: contentVM)
         _toolbarViewModel = StateObject(wrappedValue: toolbarVM)
     }
@@ -50,6 +50,9 @@ struct ContentView: View {
             }
             .onChange(of: viewModel.selectedFret) { _ in
                 toolbarViewModel.selectedFret = viewModel.selectedFret
+            }
+            .onChange(of: viewModel.selectedMeasureBar) { _ in
+                toolbarViewModel.selectedMeasureBar = viewModel.selectedMeasureBar
             }
             .onChange(of: viewModel.playbackState.isPlaying) { isPlaying in
                 toolbarViewModel.isPlaying = isPlaying

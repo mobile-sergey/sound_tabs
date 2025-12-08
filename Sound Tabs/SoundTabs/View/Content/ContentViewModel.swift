@@ -15,6 +15,7 @@ import UIKit
 class ContentViewModel: ObservableObject {
     @Published var tabLines: [TabLine] = [TabLine()]
     @Published var selectedFret: TabFret = TabFret(isSelected: false)
+    @Published var selectedMeasureBar: MeasureBar? = nil
     @Published var metadata: TabMetadata = TabMetadata()
     @Published var chords: [Chord] = []
     @Published var playbackState: PlaybackState
@@ -57,12 +58,27 @@ class ContentViewModel: ObservableObject {
     func addFret(to lineId: UUID, stringIndex: Int, at position: Double, fretNumber: Int) {
         if let lineIndex = tabLines.firstIndex(where: { $0.id == lineId }),
            stringIndex >= 0 && stringIndex < tabLines[lineIndex].strings.count {
+            // Снимаем выделение со всех нот и тактов перед созданием новой ноты
+            deselectAllFrets()
+            deselectAllMeasureBars()
+            
             // Позиция уже нормализована и привязана к делениям в TabLineViewModel
             // Просто сохраняем её как есть
             let newFret = TabFret(fretNumber: max(0, min(24, fretNumber)), position: position, isSelected: true)
             
             tabLines[lineIndex].strings[stringIndex].frets.append(newFret)
             selectedFret = newFret
+            
+            // Обновляем выделение в табах
+            for lineIdx in tabLines.indices {
+                for strIdx in tabLines[lineIdx].strings.indices {
+                    for fretIdx in tabLines[lineIdx].strings[strIdx].frets.indices {
+                        if tabLines[lineIdx].strings[strIdx].frets[fretIdx].id == newFret.id {
+                            tabLines[lineIdx].strings[strIdx].frets[fretIdx].isSelected = true
+                        }
+                    }
+                }
+            }
             
             // Обновляем позицию воспроизведения на позицию новой ноты
             playbackState.currentPosition.tabLineIndex = lineIndex
@@ -101,8 +117,9 @@ class ContentViewModel: ObservableObject {
     }
     
     func selectFret(_ fret: TabFret) {
-        // Снимаем выделение со всех нот
+        // Снимаем выделение со всех нот и тактов
         deselectAllFrets()
+        deselectAllMeasureBars()
         
         // Выделяем новую ноту
         var updatedFret = fret
@@ -152,6 +169,53 @@ class ContentViewModel: ObservableObject {
         selectedFret = TabFret(isSelected: false)
     }
     
+    func selectMeasureBar(_ measureBar: MeasureBar, in tabLineId: UUID) {
+        // Снимаем выделение со всех нот и тактов
+        deselectAllFrets()
+        deselectAllMeasureBars()
+        
+        // Выделяем новый такт
+        selectedMeasureBar = measureBar
+        
+        // Обновляем выделение в табах
+        if let lineIndex = tabLines.firstIndex(where: { $0.id == tabLineId }) {
+            for stringIndex in tabLines[lineIndex].strings.indices {
+                if let barIndex = tabLines[lineIndex].strings[stringIndex].measureBars.firstIndex(where: { $0.id == measureBar.id }) {
+                    tabLines[lineIndex].strings[stringIndex].measureBars[barIndex].isSelected = true
+                }
+            }
+        }
+    }
+    
+    func deselectAllMeasureBars() {
+        // Снимаем выделение со всех тактов
+        for lineIndex in tabLines.indices {
+            for stringIndex in tabLines[lineIndex].strings.indices {
+                for barIndex in tabLines[lineIndex].strings[stringIndex].measureBars.indices {
+                    tabLines[lineIndex].strings[stringIndex].measureBars[barIndex].isSelected = false
+                }
+            }
+        }
+        selectedMeasureBar = nil
+    }
+    
+    func updateMeasureBarDuration(_ measureBar: MeasureBar, duration: MeasureDuration, in tabLineId: UUID) {
+        // Обновляем длину такта
+        if let lineIndex = tabLines.firstIndex(where: { $0.id == tabLineId }) {
+            for stringIndex in tabLines[lineIndex].strings.indices {
+                if let barIndex = tabLines[lineIndex].strings[stringIndex].measureBars.firstIndex(where: { $0.id == measureBar.id }) {
+                    tabLines[lineIndex].strings[stringIndex].measureBars[barIndex].measureDuration = duration
+                    // Обновляем selectedMeasureBar
+                    if selectedMeasureBar?.id == measureBar.id {
+                        var updatedBar = tabLines[lineIndex].strings[stringIndex].measureBars[barIndex]
+                        updatedBar.isSelected = true
+                        selectedMeasureBar = updatedBar
+                    }
+                }
+            }
+        }
+    }
+    
     func loadMoreIfNeeded(at index: Int) {
         // Пагинация: если прокрутили к последним 3 строкам, добавляем новые
         if index >= tabLines.count - 3 {
@@ -165,6 +229,10 @@ class ContentViewModel: ObservableObject {
             if self.selectedFret.isSelected {
                 self.deleteFret(self.selectedFret)
                 toolbarViewModel.selectedFret = self.selectedFret
+            } else if self.selectedMeasureBar != nil {
+                // Удаление такта - снимаем выделение
+                self.deselectAllMeasureBars()
+                toolbarViewModel.selectedMeasureBar = nil
             }
         }
         
@@ -174,6 +242,19 @@ class ContentViewModel: ObservableObject {
             fret.fretNumber = fretNumber
             self.updateFret(fret)
             toolbarViewModel.selectedFret = self.selectedFret
+        }
+        
+        toolbarViewModel.onUpdateMeasureDuration = { [weak self] duration in
+            guard let self = self else { return }
+            if let measureBar = self.selectedMeasureBar,
+               let tabLine = self.tabLines.first(where: { line in
+                   line.strings.contains { string in
+                       string.measureBars.contains { $0.id == measureBar.id }
+                   }
+               }) {
+                self.updateMeasureBarDuration(measureBar, duration: duration, in: tabLine.id)
+                toolbarViewModel.selectedMeasureBar = self.selectedMeasureBar
+            }
         }
         
         toolbarViewModel.onTogglePlayPause = { [weak self] in

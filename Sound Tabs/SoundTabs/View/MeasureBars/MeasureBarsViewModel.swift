@@ -14,11 +14,17 @@ import SwiftUI
 class MeasureBarsViewModel: ObservableObject {
     let measureBars: [MeasureBar]
     var size: CGSize = .zero
+    var parentViewModel: ContentViewModel?
+    var tabLineId: UUID?
+    var defaultDuration: MeasureDuration?
     
     let nameWidth: CGFloat = 25
     
-    init(measureBars: [MeasureBar]) {
+    init(measureBars: [MeasureBar], parentViewModel: ContentViewModel? = nil, tabLineId: UUID? = nil, defaultDuration: MeasureDuration? = nil) {
         self.measureBars = measureBars
+        self.parentViewModel = parentViewModel
+        self.tabLineId = tabLineId
+        self.defaultDuration = defaultDuration
     }
     
     var availableWidth: CGFloat {
@@ -40,6 +46,30 @@ class MeasureBarsViewModel: ObservableObject {
     
     var barYPosition: CGFloat {
         barHeight / 2
+    }
+    
+    func getDuration(for bar: MeasureBar) -> MeasureDuration {
+        // Если у такта есть сохраненная длина, используем её
+        if let duration = bar.measureDuration {
+            return duration
+        }
+        // Иначе используем длину по умолчанию
+        return defaultDuration ?? .quarter
+    }
+    
+    func isBarSelected(_ bar: MeasureBar) -> Bool {
+        return parentViewModel?.selectedMeasureBar?.id == bar.id
+    }
+    
+    func handleBarTap(_ bar: MeasureBar) {
+        guard let tabLineId = tabLineId else { return }
+        if isBarSelected(bar) {
+            // Если такт уже выделен - снимаем выделение
+            parentViewModel?.deselectAllMeasureBars()
+        } else {
+            // Выделяем такт
+            parentViewModel?.selectMeasureBar(bar, in: tabLineId)
+        }
     }
 }
 

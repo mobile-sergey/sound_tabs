@@ -89,7 +89,7 @@ struct TabLineView: View {
                     }
             )
         }
-        .frame(height: 180) // 6 струн * 30
+        .frame(height: 200) // 6 струн * 30 + место для цифр такта внизу
         .background(Color(.systemBackground)) // Адаптируется к темному/светлому режиму
     }
 }

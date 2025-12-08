@@ -49,23 +49,32 @@ class MIDIService {
         let momentsPerTab = 8
         var currentTab = TabLine()
         var currentMomentIndex = 0
+        var currentTabNotes: [MIDINoteEvent] = [] // Ноты текущего таба для вычисления длительности
         
         for timeMoment in sortedTimeMoments {
             guard let notesAtMoment = timeMoments[timeMoment] else { continue }
             
             // Если нужно, создаём новый таб
             if currentMomentIndex > 0 && currentMomentIndex % momentsPerTab == 0 {
+                // Вычисляем длительность такта для предыдущего таба
+                if !currentTabNotes.isEmpty {
+                    let measureDuration = calculateMeasureDuration(
+                        from: currentTabNotes,
+                        ticksPerQuarter: midiInfo.ticksPerQuarter,
+                        tempo: midiInfo.tempo,
+                        timeSignatureTop: midiInfo.timeSignatureTop,
+                        timeSignatureBottom: midiInfo.timeSignatureBottom
+                    )
+                    // Обновляем длительность такта для всех тактовых линий в табе
+                    for stringIndex in currentTab.strings.indices {
+                        for barIndex in currentTab.strings[stringIndex].measureBars.indices {
+                            currentTab.strings[stringIndex].measureBars[barIndex].measureDuration = measureDuration
+                        }
+                    }
+                }
                 tabLines.append(currentTab)
                 currentTab = TabLine()
-            }
-            
-            // Добавляем тактовую линию в начале таба (если это первый момент таба)
-            if currentMomentIndex % momentsPerTab == 0 {
-                // Добавляем начальную тактовую линию
-                for stringIndex in 0..<currentTab.strings.count {
-                    let measureBar = MeasureBar(position: 0.0, isDouble: false)
-                    currentTab.strings[stringIndex].measureBars.append(measureBar)
-                }
+                currentTabNotes = []
             }
             
             // Вычисляем позицию момента времени на табе (0.0 - 1.0)
@@ -87,9 +96,28 @@ class MIDIService {
             // Распределяем моменты времени равномерно в доступной области
             let momentIndexInTab = currentMomentIndex % momentsPerTab
             // Позиция внутри доступной области (0.0 - 1.0)
-            let positionInAvailableArea = Double(momentIndexInTab) / Double(momentsPerTab)
+            let positionInAvailableArea = Double(momentIndexInTab) / Double(max(1, momentsPerTab - 1))
             // Итоговая позиция на табе (0.0 - 1.0)
             let momentPositionInTab = startOffsetRatio + positionInAvailableArea * availableWidthRatio
+            
+            // Вычисляем длительность такта на основе нот в этом моменте времени
+            let measureDuration = calculateMeasureDuration(
+                from: notesAtMoment,
+                ticksPerQuarter: midiInfo.ticksPerQuarter,
+                tempo: midiInfo.tempo,
+                timeSignatureTop: midiInfo.timeSignatureTop,
+                timeSignatureBottom: midiInfo.timeSignatureBottom
+            )
+            
+            // Создаем тактовую линию для этого момента времени
+            for stringIndex in 0..<currentTab.strings.count {
+                var measureBar = MeasureBar(position: momentPositionInTab, isDouble: false)
+                measureBar.measureDuration = measureDuration
+                currentTab.strings[stringIndex].measureBars.append(measureBar)
+            }
+            
+            // Сохраняем ноты текущего таба для вычисления общей длительности (если нужно)
+            currentTabNotes.append(contentsOf: notesAtMoment)
             
             // Для полифонии выбираем струны так, чтобы лады были максимально близкими
             let assignedStrings = assignStringsForPolyphony(notes: notesAtMoment)
@@ -105,20 +133,27 @@ class MIDIService {
                 currentTab.strings[stringIndex].frets.append(tabFret)
             }
             
-            // Добавляем тактовую линию в конце таба (если это последний момент таба)
-            if (currentMomentIndex + 1) % momentsPerTab == 0 {
-                let measureEndPosition = 1.0
-                for stringIndex in 0..<currentTab.strings.count {
-                    let measureBar = MeasureBar(position: measureEndPosition, isDouble: true)
-                    currentTab.strings[stringIndex].measureBars.append(measureBar)
-                }
-            }
-            
             currentMomentIndex += 1
         }
         
         // Добавляем последний таб
         if !currentTab.strings.isEmpty {
+            // Вычисляем длительность такта для последнего таба
+            if !currentTabNotes.isEmpty {
+                let measureDuration = calculateMeasureDuration(
+                    from: currentTabNotes,
+                    ticksPerQuarter: midiInfo.ticksPerQuarter,
+                    tempo: midiInfo.tempo,
+                    timeSignatureTop: midiInfo.timeSignatureTop,
+                    timeSignatureBottom: midiInfo.timeSignatureBottom
+                )
+                // Обновляем длительность такта для всех тактовых линий в табе
+                for stringIndex in currentTab.strings.indices {
+                    for barIndex in currentTab.strings[stringIndex].measureBars.indices {
+                        currentTab.strings[stringIndex].measureBars[barIndex].measureDuration = measureDuration
+                    }
+                }
+            }
             tabLines.append(currentTab)
         }
         
@@ -155,7 +190,7 @@ class MIDIService {
         var selectedFrets: [Int] = []
         var usedStrings: Set<Int> = []
         
-        for (noteIndex, assignments) in possibleAssignments.enumerated() {
+        for (_, assignments) in possibleAssignments.enumerated() {
             guard !assignments.isEmpty else {
                 selectedStrings.append(0)
                 selectedFrets.append(0)
@@ -210,6 +245,88 @@ class MIDIService {
             timeSignatureBottom: timeSignatureBottom,
             to: url
         )
+    }
+    
+    /// Вычисляет длительность такта на основе длительности нот
+    /// Формула: длительность ноты в долях четверти = (durationInTicks / ticksPerQuarter)
+    /// Затем определяем ближайшую стандартную длительность (1, 1/2, 1/4, 1/8, 1/16, 1/32, 1/64)
+    /// Эти длительности указаны в долях четверти: 1 = целая нота (4 четверти), 0.5 = половина (2 четверти), 
+    /// 0.25 = четверть, 0.125 = восьмая, и т.д.
+    private static func calculateMeasureDuration(from notes: [MIDINoteEvent], ticksPerQuarter: Int, tempo: Int, timeSignatureTop: Int, timeSignatureBottom: Int) -> MeasureDuration {
+        guard !notes.isEmpty else {
+            // Если нот нет, используем длительность по умолчанию
+            return MeasureDuration.fromTimeSignatureBottom(timeSignatureBottom)
+        }
+        
+        // Находим длительности всех нот в этом моменте времени
+        let noteDurations = notes.map { $0.duration }.sorted()
+        
+        guard !noteDurations.isEmpty && noteDurations[0] > 0 else {
+            return MeasureDuration.fromTimeSignatureBottom(timeSignatureBottom)
+        }
+        
+        // Используем медианную длительность вместо максимальной,
+        // так как максимальная может быть аномально большой (длинные ноты)
+        let medianDuration: Int
+        if noteDurations.count == 1 {
+            medianDuration = noteDurations[0]
+        } else if noteDurations.count % 2 == 0 {
+            // Четное количество - берем среднее двух средних значений
+            medianDuration = (noteDurations[noteDurations.count / 2 - 1] + noteDurations[noteDurations.count / 2]) / 2
+        } else {
+            // Нечетное количество - берем среднее значение
+            medianDuration = noteDurations[noteDurations.count / 2]
+        }
+        
+        // Вычисляем длительность в долях четверти
+        // Формула: durationInQuarterNotes = durationInTicks / ticksPerQuarter
+        let durationInQuarterNotes = Double(medianDuration) / Double(ticksPerQuarter)
+        
+        // Определяем ближайшую стандартную длительность
+        // Стандартные длительности в долях четверти:
+        // 1.0 = целая нота (4 четверти)
+        // 0.5 = половина (2 четверти)
+        // 0.25 = четверть (1 четверть)
+        // 0.125 = восьмая (1/2 четверти)
+        // 0.0625 = шестнадцатая (1/4 четверти)
+        // 0.03125 = тридцать вторая (1/8 четверти)
+        // 0.015625 = шестьдесят четвертая (1/16 четверти)
+        let durations: [Double] = [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625]
+        let durationValues: [MeasureDuration] = [.whole, .half, .quarter, .eighth, .sixteenth, .thirtySecond, .sixtyFourth]
+        
+        var closestDuration = MeasureDuration.fromTimeSignatureBottom(timeSignatureBottom)
+        var minDifference = Double.infinity
+        
+        // Находим ближайшую стандартную длительность
+        // Для значений между 0.75 и 1.25 исключаем целую ноту из рассмотрения,
+        // так как такие значения обычно не являются целыми нотами
+        let excludeWhole = durationInQuarterNotes > 0.75 && durationInQuarterNotes < 1.25
+        
+        for (index, duration) in durations.enumerated() {
+            // Пропускаем целую ноту, если значение в "подозрительном" диапазоне
+            if excludeWhole && duration == 1.0 {
+                continue
+            }
+            
+            let difference = abs(durationInQuarterNotes - duration)
+            
+            if difference < minDifference {
+                minDifference = difference
+                closestDuration = durationValues[index]
+            }
+        }
+        
+        // Если не нашли подходящую длительность (все были исключены),
+        // используем длительность по умолчанию
+        if minDifference == Double.infinity {
+            closestDuration = MeasureDuration.fromTimeSignatureBottom(timeSignatureBottom)
+        }
+        
+        // Отладочный вывод
+        print("MIDI Import: medianDuration=\(medianDuration), maxDuration=\(noteDurations.max() ?? 0), ticksPerQuarter=\(ticksPerQuarter), tempo=\(tempo), timeSignature=\(timeSignatureTop)/\(timeSignatureBottom)")
+        print("MIDI Import: durationInQuarterNotes=\(durationInQuarterNotes), closestDuration=\(closestDuration.displayString)")
+        
+        return closestDuration
     }
     
     /// Преобразует MIDI ноту в номер лада на струне

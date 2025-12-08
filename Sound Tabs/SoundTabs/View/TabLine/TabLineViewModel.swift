@@ -196,7 +196,51 @@ class TabLineViewModel: ObservableObject {
     func getMeasureBars() -> [MeasureBar] {
         // Берем тактовые линии из первой струны, так как они одинаковые для всех
         guard !tabLine.strings.isEmpty else { return [] }
+        
+        // Если тактов нет, создаем их автоматически для всех позиций деления
+        if tabLine.strings[0].measureBars.isEmpty {
+            createDefaultMeasureBars()
+        }
+        
         return tabLine.strings[0].measureBars
+    }
+    
+    private func createDefaultMeasureBars() {
+        // Создаем такты для всех 8 позиций деления
+        let divisions = 8
+        let endOffset: CGFloat = 30
+        let startThinBarXPosition: CGFloat = 30
+        let timeSignatureOffset = timeSignatureWidth + 5
+        let startOffset = startThinBarXPosition + timeSignatureOffset
+        
+        // Используем примерную ширину экрана для вычисления позиций
+        // Позиции будут нормализованы относительно ширины таба (0.0 - 1.0)
+        let screenWidth: CGFloat = 375
+        let availableWidth = screenWidth - startOffset - endOffset
+        
+        for i in 0..<divisions {
+            // Вычисляем нормализованную позицию (0.0 - 1.0)
+            // Для 8 делений: 0, 1/7, 2/7, ..., 6/7, 1.0
+            let snappedPosition = Double(i) / Double(max(1, divisions - 1))
+            // Нормализуем позицию с учетом отступов
+            let finalPosition = (startOffset / screenWidth) + snappedPosition * (availableWidth / screenWidth)
+            
+            // Создаем такт на каждой позиции деления
+            for stringIndex in tabLine.strings.indices {
+                let measureBar = MeasureBar(
+                    position: finalPosition,
+                    isDouble: false,
+                    measureDuration: nil, // Будет использоваться значение по умолчанию
+                    isSelected: false
+                )
+                tabLine.strings[stringIndex].measureBars.append(measureBar)
+            }
+        }
+        
+        // Обновляем данные в parentViewModel
+        if let lineIndex = parentViewModel?.tabLines.firstIndex(where: { $0.id == tabLine.id }) {
+            parentViewModel?.tabLines[lineIndex] = tabLine
+        }
     }
     
     func createPositionMarkersViewModel(
@@ -215,7 +259,13 @@ class TabLineViewModel: ObservableObject {
     }
     
     func createMeasureBarsViewModel(measureBars: [MeasureBar], size: CGSize) -> MeasureBarsViewModel {
-        let vm = MeasureBarsViewModel(measureBars: measureBars)
+        let defaultDuration = metadata.map { MeasureDuration.fromTimeSignatureBottom($0.sizeBottom) }
+        let vm = MeasureBarsViewModel(
+            measureBars: measureBars,
+            parentViewModel: parentViewModel,
+            tabLineId: tabLine.id,
+            defaultDuration: defaultDuration
+        )
         vm.size = size
         return vm
     }
