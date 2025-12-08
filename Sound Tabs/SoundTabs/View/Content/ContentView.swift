@@ -12,6 +12,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = ContentViewModel()
     @StateObject private var toolbarViewModel: ToolbarViewModel
+    @State private var showMIDIPicker = false
     
     init() {
         let contentVM = ContentViewModel()
@@ -25,6 +26,20 @@ struct ContentView: View {
             toolbarSection
             
             scrollSection
+        }
+        .sheet(isPresented: $showMIDIPicker) {
+            MIDIFilePicker(isPresented: $showMIDIPicker) { url in
+                viewModel.importMIDIFile(from: url)
+            }
+        }
+        .sheet(isPresented: $viewModel.shouldShowTrackSelector) {
+            TrackSelectorView(viewModel: viewModel)
+        }
+        .onChange(of: viewModel.shouldShowMIDIPicker) { shouldShow in
+            if shouldShow {
+                showMIDIPicker = true
+                viewModel.shouldShowMIDIPicker = false
+            }
         }
     }
     

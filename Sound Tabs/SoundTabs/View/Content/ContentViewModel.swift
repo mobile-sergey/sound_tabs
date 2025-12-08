@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import UIKit
 
 /// Главная ViewModel приложения, управляющая всеми табулатурами, метаданными и выбранными нотами.
 /// Отвечает за создание, удаление, выделение нот и обновление метаданных (темпа и размера такта).
@@ -17,6 +18,10 @@ class ContentViewModel: ObservableObject {
     @Published var metadata: TabMetadata = TabMetadata()
     @Published var chords: [Chord] = []
     @Published var playbackState: PlaybackState
+    @Published var shouldShowMIDIPicker: Bool = false
+    @Published var shouldShowTrackSelector: Bool = false
+    @Published var availableTracks: [MIDITrackInfo] = []
+    @Published var selectedTrackIndex: Int = 0
     
     init() {
         self.tabLines = [TabLine()]
@@ -269,7 +274,7 @@ class ContentViewModel: ObservableObject {
                 totalTabLines: tabLines.count,
                 lastNoteTabIndex: lastTabIndex,
                 lastNotePosition: lastPosition,
-                onPositionUpdate: { [weak self] position in
+                onPositionUpdate: { _ in
                     // Позиция уже обновлена в таймере через objectWillChange
                     // Здесь просто синхронизируем, если нужно
                     // Но лучше не обновлять, так как это может создать конфликт
@@ -282,11 +287,118 @@ class ContentViewModel: ObservableObject {
     }
     
     func saveData() {
-        // TODO: Реализовать сохранение
+        // Экспорт в MIDI файл
+        // Создаём временный URL для сохранения
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let fileName = "tablature_\(Date().timeIntervalSince1970).mid"
+        let fileURL = documentsPath.appendingPathComponent(fileName)
+        
+        do {
+            try MIDIService.exportMIDI(
+                tabLines: tabLines,
+                tempo: metadata.tempo,
+                timeSignatureTop: metadata.sizeTop,
+                timeSignatureBottom: metadata.sizeBottom,
+                to: fileURL
+            )
+            
+            // Показываем диалог для сохранения файла через UIActivityViewController
+            DispatchQueue.main.async {
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let rootViewController = windowScene.windows.first?.rootViewController {
+                    let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+                    if let popover = activityVC.popoverPresentationController {
+                        popover.sourceView = rootViewController.view
+                        popover.sourceRect = CGRect(x: rootViewController.view.bounds.midX, y: rootViewController.view.bounds.midY, width: 0, height: 0)
+                        popover.permittedArrowDirections = []
+                    }
+                    rootViewController.present(activityVC, animated: true)
+                }
+            }
+        } catch {
+            print("Ошибка экспорта MIDI: \(error)")
+            // TODO: Показать ошибку пользователю
+        }
     }
     
     func loadData() {
-        // TODO: Реализовать загрузку
+        // Импорт из MIDI файла
+        // Показываем диалог выбора файла
+        shouldShowMIDIPicker = true
+    }
+    
+    /// Загружает MIDI файл и импортирует данные
+    func importMIDIFile(from url: URL) {
+        // Получаем доступ к файлу (security-scoped resource)
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        
+        do {
+            // Парсим MIDI файл
+            let midiInfo = try MIDIParser.parseMIDIFile(from: url)
+            
+            // Если треков больше одного, показываем диалог выбора
+            if midiInfo.tracks.count > 1 {
+                availableTracks = midiInfo.tracks
+                selectedTrackIndex = 0
+                shouldShowTrackSelector = true
+                // Сохраняем информацию о файле для последующего импорта
+                pendingMIDIInfo = midiInfo
+            } else if midiInfo.tracks.count == 1 {
+                // Если трек один, загружаем его сразу
+                importSelectedTrack(midiInfo: midiInfo, trackIndex: 0)
+            }
+            
+        } catch {
+            // TODO: Показать ошибку пользователю
+        }
+    }
+    
+    private var pendingMIDIInfo: MIDIFileInfo?
+    
+    /// Импортирует выбранный трек
+    func importSelectedTrack(midiInfo: MIDIFileInfo, trackIndex: Int) {
+        do {
+            let (importedTabLines, tempo, timeSignatureTop, timeSignatureBottom) = try MIDIService.importMIDIFromTrack(
+                midiInfo: midiInfo,
+                trackIndex: trackIndex
+            )
+            
+            // Обновляем данные
+            tabLines = importedTabLines
+            metadata.tempo = tempo
+            metadata.sizeTop = timeSignatureTop
+            metadata.sizeBottom = timeSignatureBottom
+            
+            // Обновляем playbackState
+            playbackState.tempo = tempo
+            playbackState.timeSignatureTop = timeSignatureTop
+            playbackState.timeSignatureBottom = timeSignatureBottom
+            
+            // Вычисляем начальную позицию с учётом отступов
+            let screenWidth: CGFloat = 375
+            let startThinBarXPosition: CGFloat = 30
+            let timeSignatureWidth: CGFloat = 96
+            let spacing: CGFloat = 5
+            let startOffset = startThinBarXPosition + timeSignatureWidth + spacing
+            let initialPosition = Double(startOffset / screenWidth)
+            playbackState.currentPosition = PlaybackPosition(tabLineIndex: 0, position: initialPosition)
+            
+        } catch {
+            // TODO: Показать ошибку пользователю
+        }
+    }
+    
+    /// Подтверждает выбор трека и импортирует его
+    func confirmTrackSelection() {
+        guard let midiInfo = pendingMIDIInfo else { return }
+        importSelectedTrack(midiInfo: midiInfo, trackIndex: selectedTrackIndex)
+        shouldShowTrackSelector = false
+        pendingMIDIInfo = nil
     }
 }
 
