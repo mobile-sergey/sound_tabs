@@ -10,15 +10,11 @@ import SwiftUI
 /// Главный View приложения, отображающий панель инструментов и прокручиваемую область с табулатурами.
 /// Содержит панель выбора номера лада и область с темпом, текстом над табами и самими табами.
 struct ContentView: View {
-    @StateObject private var viewModel = ContentViewModel()
-    @StateObject private var toolbarViewModel: ToolbarViewModel
-    @State private var showMIDIPicker = false
+    @StateObject private var viewModel: ContentViewModel
     
     init() {
         let contentVM = ContentViewModel()
-        let toolbarVM = ToolbarViewModel(selectedFret: contentVM.selectedFret, selectedMeasureBar: contentVM.selectedMeasureBar)
         _viewModel = StateObject(wrappedValue: contentVM)
-        _toolbarViewModel = StateObject(wrappedValue: toolbarVM)
     }
     
     var body: some View {
@@ -27,42 +23,26 @@ struct ContentView: View {
             
             scrollSection
         }
-        .sheet(isPresented: $showMIDIPicker) {
-            MIDIFilePicker(isPresented: $showMIDIPicker) { url in
+        .sheet(isPresented: $viewModel.shouldShowMIDIPicker) {
+            MIDIFilePicker(isPresented: $viewModel.shouldShowMIDIPicker) { url in
                 viewModel.importMIDIFile(from: url)
             }
         }
         .sheet(isPresented: $viewModel.shouldShowTrackSelector) {
-            TrackSelectorView(viewModel: viewModel)
-        }
-        .onChange(of: viewModel.shouldShowMIDIPicker) { shouldShow in
-            if shouldShow {
-                showMIDIPicker = true
-                viewModel.shouldShowMIDIPicker = false
+            if let trackSelectorViewModel = viewModel.trackSelectorViewModel {
+                TrackSelectorView(viewModel: trackSelectorViewModel)
             }
         }
     }
     
     private var toolbarSection: some View {
-        ToolbarView(viewModel: toolbarViewModel)
-            .onAppear {
-                viewModel.setupToolbarCallbacks(for: toolbarViewModel)
-            }
-            .onChange(of: viewModel.selectedFret) { _ in
-                toolbarViewModel.selectedFret = viewModel.selectedFret
-            }
-            .onChange(of: viewModel.selectedMeasureBar) { _ in
-                toolbarViewModel.selectedMeasureBar = viewModel.selectedMeasureBar
-            }
-            .onChange(of: viewModel.playbackState.isPlaying) { isPlaying in
-                toolbarViewModel.isPlaying = isPlaying
-            }
+        ToolbarView(viewModel: viewModel.toolbarViewModel)
     }
     
     private var scrollSection: some View {
         ScrollView {
-                VStack(spacing: 0) {
-                    tabLinesSection
+            VStack(spacing: 0) {
+                tabLinesSection
             }
             .contentShape(Rectangle())
             .gesture(
@@ -72,17 +52,17 @@ struct ContentView: View {
                     }
             )
         }
-        .background(Color(.systemBackground)) // Адаптируется к темному/светлому режиму
+        .background(Color(.systemBackground))
     }
     
     private var tabLinesSection: some View {
-        LazyVStack(spacing: 5) { // Уменьшено расстояние между табами
+        LazyVStack(spacing: 5) {
             ForEach(Array(viewModel.tabLines.enumerated()), id: \.element.id) { index, tabLine in
                 TabLineContainerView(
                     viewModel: viewModel.createTabLineContainerViewModel(
                         for: tabLine,
                         at: index,
-                        tabWidth: UIScreen.main.bounds.width - 40 // Учитываем padding
+                        tabWidth: UIScreen.main.bounds.width - 40
                     )
                 )
                 .id(viewModel.tabLines[index].id)

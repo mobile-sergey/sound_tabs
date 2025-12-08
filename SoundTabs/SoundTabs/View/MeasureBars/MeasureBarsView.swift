@@ -21,17 +21,7 @@ struct MeasureBarsView: View {
     var body: some View {
         if !viewModel.measureBars.isEmpty {
             ForEach(viewModel.measureBars) { bar in
-                ZStack {
-                    // Вертикальная линия такта
-                    Rectangle()
-                        .fill(Color.black)
-                        .frame(width: viewModel.barWidth(for: bar))
-                        .frame(height: viewModel.barHeight)
-                        .position(
-                            x: viewModel.calculateBarXPosition(for: bar),
-                            y: viewModel.barYPosition
-                        )
-                    
+                ZStack {                    
                     // Длина такта внизу таба, под струнами
                     Text(viewModel.getDuration(for: bar).displayString)
                         .font(.system(size: 12, weight: .medium))

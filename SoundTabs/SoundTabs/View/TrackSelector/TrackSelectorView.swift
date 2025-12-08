@@ -8,34 +8,34 @@
 import SwiftUI
 
 struct TrackSelectorView: View {
-    @ObservedObject var viewModel: ContentViewModel
+    @ObservedObject var viewModel: TrackSelectorViewModel
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             List {
-                ForEach(Array(viewModel.availableTracks.enumerated()), id: \.offset) { index, track in
+                ForEach(Array(viewModel.availableTracks.enumerated()), id: \.offset) { index, _ in
                     Button(action: {
-                        viewModel.selectedTrackIndex = index
+                        viewModel.selectTrack(at: index)
                     }) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(track.name ?? "Трек \(index + 1)")
+                                Text(viewModel.getTrackName(at: index))
                                     .font(.headline)
                                     .foregroundColor(.primary)
                                 
-                                Text(MIDIInstrumentNames.getShortInstrumentName(programChange: track.instrument))
+                                Text(viewModel.getInstrumentName(at: index))
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                                 
-                                Text("\(track.notes.count) нот")
+                                Text("\(viewModel.getNotesCount(at: index)) нот")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
                             
                             Spacer()
                             
-                            if viewModel.selectedTrackIndex == index {
+                            if viewModel.isTrackSelected(at: index) {
                                 Image(systemName: "checkmark")
                                     .foregroundColor(.blue)
                             }
@@ -54,10 +54,10 @@ struct TrackSelectorView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Загрузить") {
-                        viewModel.confirmTrackSelection()
+                        viewModel.confirmSelection()
                         dismiss()
                     }
-                    .disabled(viewModel.availableTracks.isEmpty)
+                    .disabled(viewModel.isConfirmButtonDisabled)
                 }
             }
         }
