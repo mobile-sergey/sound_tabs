@@ -56,6 +56,21 @@ struct TabLineView: View {
                     viewModel: viewModel.createPlaybackLineViewModel(),
                     geometry: geometry
                 )
+                
+                // Зелёные линии для Repeat (отображаются на табах, где есть Repeat и включён repeat)
+                if let repeatVM = viewModel.createRepeatViewModel() {
+                    if repeatVM.isRepeatEnabled, let range = repeatVM.highlightRange(for: viewModel.tabLine.id, geometry: geometry) {
+                        Rectangle()
+                            .fill(Color.green.opacity(0.12))
+                            .frame(width: range.1 - range.0, height: geometry.size.height)
+                            .position(x: (range.0 + range.1) / 2, y: geometry.size.height / 2)
+                    }
+                    
+                    RepeatView(
+                        viewModel: repeatVM,
+                        geometry: geometry
+                    )
+                }
             }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)

@@ -37,6 +37,13 @@ struct ToolbarView: View {
                             .font(.title2)
                             .foregroundColor(.primary)
                     }
+                    
+                    // Кнопка Repeat
+                    Button(action: viewModel.toggleRepeat) {
+                        Image(systemName: "repeat.circle")
+                            .font(.title2)
+                            .foregroundColor(viewModel.isRepeatEnabled ? .green : .primary)
+                    }
                 }
                 
                 Spacer()

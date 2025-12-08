@@ -24,12 +24,21 @@ class ContentViewModel: ObservableObject {
     @Published var shouldShowTrackSelector: Bool = false
     @Published var trackSelectorViewModel: TrackSelectorViewModel?
     @Published var toolbarViewModel: ToolbarViewModel
+    @Published var selectedRepeat: TabRepeat = TabRepeat(startTab: UUID(), startPosition: 0.0, endTab: UUID(), endPosition: 1.0)
+    @Published var isRepeatEnabled: Bool = false
+    @Published var selectedRepeatType: RepeatType? = nil // nil, .start, .end
+    
+    enum RepeatType {
+        case start
+        case end
+    }
     
     private var availableTracks: [MIDITrackInfo] = []
     private var selectedTrackIndex: Int = 0
     
     init() {
-        self.tabLines = [TabLine()]
+        let lines = [TabLine()]
+        self.tabLines = lines
         // Позиция воспроизведения должна соответствовать первой позиции, где могут быть ноты
         // Вычисляем нормализованную позицию с учётом отступов (как при создании ноты)
         // Используем те же константы, что и в TabLineViewModel:
@@ -54,7 +63,11 @@ class ContentViewModel: ObservableObject {
         // Используем значения по умолчанию напрямую, без обращения к self
         let defaultFret = TabFret(isSelected: false)
         let defaultMeasureBar: MeasureBar? = nil
-        self.toolbarViewModel = ToolbarViewModel(selectedFret: defaultFret, selectedMeasureBar: defaultMeasureBar)
+        let firstTabId = lines.first?.id ?? UUID()
+        let startRepeat = TabRepeat(startTab: firstTabId, startPosition: 0.0, endTab: firstTabId, endPosition: 1.0)
+        self.selectedRepeat = startRepeat
+        self.toolbarViewModel = ToolbarViewModel(selectedFret: defaultFret, selectedMeasureBar: defaultMeasureBar, selectedRepeat: startRepeat)
+        self.toolbarViewModel.isRepeatEnabled = false
         
         // Теперь можем использовать все свойства для настройки
         self.playbackState.tempo = metadata.tempo
@@ -82,6 +95,13 @@ class ContentViewModel: ObservableObject {
                 self?.toolbarViewModel.isPlaying = isPlaying
             }
             .store(in: &cancellables)
+        
+        $isRepeatEnabled
+            .sink { [weak self] isEnabled in
+                self?.toolbarViewModel.isRepeatEnabled = isEnabled
+            }
+            .store(in: &cancellables)
+
     }
     
     private var cancellables = Set<AnyCancellable>()
@@ -235,6 +255,42 @@ class ContentViewModel: ObservableObject {
         selectedMeasureBar = nil
     }
     
+    func selectRepeat(_ type: RepeatType) {
+        // Снимаем выделение со всех нот и тактов
+        deselectAllFrets()
+        deselectAllMeasureBars()
+        selectedRepeatType = type
+    }
+    
+    func deselectRepeat() {
+        selectedRepeatType = nil
+    }
+    
+    func updateRepeatPosition(type: RepeatType, tabLineId: UUID, position: Double) {
+        // Обновляем позицию Repeat с привязкой к делениям
+        let divisions = 8
+        let snappedPosition = NoteSnappingHelper.snapToDivision(position, divisions: divisions)
+        
+        var updatedRepeat = selectedRepeat
+        if type == .start {
+            updatedRepeat.startTab = tabLineId
+            updatedRepeat.startPosition = snappedPosition
+        } else {
+            updatedRepeat.endTab = tabLineId
+            updatedRepeat.endPosition = snappedPosition
+        }
+        selectedRepeat = updatedRepeat
+    }
+    
+    func findTabLineAt(yPosition: CGFloat, tabLineHeight: CGFloat) -> UUID? {
+        // Находим таб по вертикальной позиции
+        let tabIndex = Int(yPosition / tabLineHeight)
+        if tabIndex >= 0 && tabIndex < tabLines.count {
+            return tabLines[tabIndex].id
+        }
+        return nil
+    }
+    
     func updateMeasureBarDuration(_ measureBar: MeasureBar, duration: MeasureDuration, in tabLineId: UUID) {
         // Обновляем длину такта
         if let lineIndex = tabLines.firstIndex(where: { $0.id == tabLineId }) {
@@ -304,6 +360,28 @@ class ContentViewModel: ObservableObject {
         toolbarViewModel.onLoad = { [weak self] in
             self?.loadData()
         }
+        
+        toolbarViewModel.onRepeat = { [weak self] in
+            guard let self = self else { return }
+            // Если после загрузки MIDI id не найдены, ставим repeat на первый таб
+            if self.tabLines.first(where: { $0.id == self.selectedRepeat.startTab }) == nil ||
+                self.tabLines.first(where: { $0.id == self.selectedRepeat.endTab }) == nil {
+                if let firstId = self.tabLines.first?.id {
+                    let newRepeat = TabRepeat(startTab: firstId, startPosition: 0.0, endTab: firstId, endPosition: 1.0)
+                    self.selectedRepeat = newRepeat
+                    self.toolbarViewModel.selectedRepeat = newRepeat
+                }
+            }
+            // Синхронизируем состояние из ToolbarViewModel в ContentViewModel
+            self.isRepeatEnabled = self.toolbarViewModel.isRepeatEnabled
+        }
+        
+//        // Также подписываемся на изменения isRepeatEnabled в ToolbarViewModel для двусторонней синхронизации
+//        toolbarViewModel.$isRepeatEnabled
+//            .sink { [weak self] isEnabled in
+//                self?.isRepeatEnabled = isEnabled
+//            }
+//            .store(in: &cancellables)
     }
     
     func createTabLineContainerViewModel(
@@ -484,6 +562,15 @@ class ContentViewModel: ObservableObject {
         return beatDuration * durationInBeats
     }
     
+    private func currentRepeatBounds() -> (startTab: Int, startPos: Double, endTab: Int, endPos: Double)? {
+        guard isRepeatEnabled,
+              let startIdx = tabLines.firstIndex(where: { $0.id == selectedRepeat.startTab }),
+              let endIdx = tabLines.firstIndex(where: { $0.id == selectedRepeat.endTab }) else {
+            return nil
+        }
+        return (startIdx, selectedRepeat.startPosition, endIdx, selectedRepeat.endPosition)
+    }
+    
     func togglePlayback() {
         if playbackState.isPlaying {
             playbackState.pausePlayback()
@@ -498,10 +585,21 @@ class ContentViewModel: ObservableObject {
             // Определяем начальную позицию для воспроизведения
             var startTabIndex = 0
             var startPosition: Double = 0.0
+            var endTabIndex = tabLines.count - 1
+            var endPosition: Double = 1.0
             
-            // Если есть выделенная нота, начинаем воспроизведение с её позиции
-            if selectedFret.isSelected {
-                // Находим таб, на котором находится выделенная нота
+            if isRepeatEnabled {
+                // Если включен repeat — стартуем с выбранного стартового repeat
+                if let sIdx = tabLines.firstIndex(where: { $0.id == selectedRepeat.startTab }) {
+                    startTabIndex = sIdx
+                    startPosition = selectedRepeat.startPosition
+                }
+                if let eIdx = tabLines.firstIndex(where: { $0.id == selectedRepeat.endTab }) {
+                    endTabIndex = eIdx
+                    endPosition = selectedRepeat.endPosition
+                }
+            } else if selectedFret.isSelected {
+                // Если есть выделенная нота, начинаем воспроизведение с её позиции
                 for (lineIndex, tabLine) in tabLines.enumerated() {
                     for string in tabLine.strings {
                         if string.frets.contains(where: { $0.id == selectedFret.id }) {
@@ -511,9 +609,12 @@ class ContentViewModel: ObservableObject {
                         }
                     }
                 }
+                // Конец — последняя нота
+                let lastNote = findLastNotePosition()
+                endTabIndex = lastNote?.tabLineIndex ?? (tabLines.count - 1)
+                endPosition = lastNote?.position ?? 1.0
             } else {
                 // Если нет выделенной ноты, начинаем с начала первого таба
-                // Находим первую ноту в первом табе
                 if !tabLines.isEmpty {
                     var firstNotePosition: Double? = nil
                     for string in tabLines[0].strings {
@@ -525,10 +626,13 @@ class ContentViewModel: ObservableObject {
                     }
                     startPosition = firstNotePosition ?? 0.0
                 }
+                // Конец — последняя нота
+                let lastNote = findLastNotePosition()
+                endTabIndex = lastNote?.tabLineIndex ?? (tabLines.count - 1)
+                endPosition = lastNote?.position ?? 1.0
             }
             
             // ВСЕГДА сбрасываем позицию воспроизведения на начальную
-            // Это гарантирует одинаковое поведение при каждом запуске
             playbackState.currentPosition.tabLineIndex = startTabIndex
             playbackState.currentPosition.position = startPosition
             playbackState.objectWillChange.send()
@@ -536,28 +640,59 @@ class ContentViewModel: ObservableObject {
             print("Старт воспроизведения: tabIndex=\(startTabIndex), position=\(startPosition)")
             
             // Сразу проигрываем ноты на начальной позиции
-            // Это гарантирует, что первая нота будет проиграна
             let initialPosition = PlaybackPosition(tabLineIndex: startTabIndex, position: startPosition)
             playNotesAtPosition(initialPosition)
             
-            // Находим последнюю ноту
-            let lastNote = findLastNotePosition()
-            let lastTabIndex = lastNote?.tabLineIndex ?? (tabLines.count - 1)
-            let lastPosition = lastNote?.position ?? 1.0
+            func startLoop() {
+                // Свежие границы для повтора при старте цикла
+                let loopBounds = currentRepeatBounds()
+                let loopEndTab = loopBounds?.endTab ?? endTabIndex
+                let loopEndPos = loopBounds?.endPos ?? endPosition
+                let loopStartTab = loopBounds?.startTab ?? startTabIndex
+                let loopStartPos = loopBounds?.startPos ?? startPosition
+                
+                playbackState.startPlayback(
+                    totalTabLines: tabLines.count,
+                    lastNoteTabIndex: loopEndTab,
+                    lastNotePosition: loopEndPos,
+                    onPositionUpdate: { [weak self] position in
+                        guard let self else { return }
+                        
+                        // Динамическая проверка актуальных границ повтора
+                        if let bounds = self.currentRepeatBounds() {
+                            if position.tabLineIndex > bounds.endTab ||
+                                (position.tabLineIndex == bounds.endTab && position.position >= bounds.endPos) {
+                                // Перескок на старт
+                                self.playbackState.currentPosition.tabLineIndex = bounds.startTab
+                                self.playbackState.currentPosition.position = bounds.startPos
+                                self.playbackState.objectWillChange.send()
+                                let loopPos = PlaybackPosition(tabLineIndex: bounds.startTab, position: bounds.startPos)
+                                self.playNotesAtPosition(loopPos)
+                                return
+                            }
+                        }
+                        
+                        self.playNotesAtPosition(position)
+                    },
+                    onComplete: { [weak self] in
+                        guard let self else { return }
+                        if self.isRepeatEnabled, let bounds = self.currentRepeatBounds() {
+                            // Возвращаемся к актуальному старту repeat и продолжаем
+                            self.playbackState.currentPosition.tabLineIndex = bounds.startTab
+                            self.playbackState.currentPosition.position = bounds.startPos
+                            self.playbackState.objectWillChange.send()
+                            let loopPos = PlaybackPosition(tabLineIndex: bounds.startTab, position: bounds.startPos)
+                            self.playNotesAtPosition(loopPos)
+                            startLoop()
+                        } else {
+                            self.playbackState.isPlaying = false
+                            GuitarSoundService.shared.stopAllNotes()
+                        }
+                    }
+                )
+            }
             
-            playbackState.startPlayback(
-                totalTabLines: tabLines.count,
-                lastNoteTabIndex: lastTabIndex,
-                lastNotePosition: lastPosition,
-                onPositionUpdate: { [weak self] position in
-                    // Проигрываем ноты на текущей позиции
-                    self?.playNotesAtPosition(position)
-                },
-                onComplete: { [weak self] in
-                    self?.playbackState.isPlaying = false
-                    GuitarSoundService.shared.stopAllNotes()
-                }
-            )
+            startLoop()
         }
     }
     
@@ -664,6 +799,13 @@ class ContentViewModel: ObservableObject {
             playbackState.tempo = tempo
             playbackState.timeSignatureTop = timeSignatureTop
             playbackState.timeSignatureBottom = timeSignatureBottom
+            
+            // Сбрасываем repeat на первый таб после загрузки (ID меняются)
+            if let firstId = importedTabLines.first?.id {
+                let newRepeat = TabRepeat(startTab: firstId, startPosition: 0.0, endTab: firstId, endPosition: 1.0)
+                selectedRepeat = newRepeat
+                toolbarViewModel.selectedRepeat = newRepeat
+            }
             
             // Вычисляем начальную позицию с учётом отступов
             let screenWidth: CGFloat = 375

@@ -308,5 +308,27 @@ class TabLineViewModel: ObservableObject {
         )
     }
     
+    func createRepeatViewModel() -> RepeatViewModel? {
+        guard let parentVM = parentViewModel else { return nil }
+        // Отображаем Repeat на всех табах между startTab и endTab (включая границы)
+        let repeatState = parentVM.selectedRepeat
+        if let startIdx = parentVM.tabLines.firstIndex(where: { $0.id == repeatState.startTab }),
+           let endIdx = parentVM.tabLines.firstIndex(where: { $0.id == repeatState.endTab }),
+           let currentIdx = parentVM.tabLines.firstIndex(where: { $0.id == tabLine.id }) {
+            let minIdx = min(startIdx, endIdx)
+            let maxIdx = max(startIdx, endIdx)
+            if currentIdx >= minIdx && currentIdx <= maxIdx {
+                return RepeatViewModel(
+                    repeatState: repeatState,
+                    parentViewModel: parentVM,
+                    tabLineId: tabLine.id,
+                    tabLineIndex: tabLineIndex,
+                    isRepeatEnabled: parentVM.isRepeatEnabled
+                )
+            }
+        }
+        return nil
+    }
+    
 }
 
