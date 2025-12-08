@@ -40,18 +40,6 @@ struct TabLineView: View {
                     SizeView(viewModel: sizeVM)
                 }
                 
-                // Вертикальные линии маркеров позиций (8 перекрестий) - на весь таб
-                PositionMarkersView(
-                    viewModel: viewModel.createPositionMarkersViewModel(
-                        divisions: 8,
-                        size: geometry.size,
-                        timeSignatureWidth: viewModel.timeSignatureWidth,
-                        spacingAfterTimeSignature: 5
-                    ),
-                    geometry: geometry
-                )
-                
-                
                 // Тактовые линии на весь таб (рисуются поверх маркеров, но под нотами)
                 MeasureBarsView(
                     viewModel: viewModel.createMeasureBarsViewModel(measureBars: viewModel.getMeasureBars(), size: geometry.size),

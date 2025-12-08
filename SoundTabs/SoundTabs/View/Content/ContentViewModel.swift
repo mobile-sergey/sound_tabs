@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import Combine
 
 /// Главная ViewModel приложения, управляющая всеми табулатурами, метаданными и выбранными нотами.
 /// Отвечает за создание, удаление, выделение нот и обновление метаданных (темпа и размера такта).
@@ -21,8 +22,11 @@ class ContentViewModel: ObservableObject {
     @Published var playbackState: PlaybackState
     @Published var shouldShowMIDIPicker: Bool = false
     @Published var shouldShowTrackSelector: Bool = false
-    @Published var availableTracks: [MIDITrackInfo] = []
-    @Published var selectedTrackIndex: Int = 0
+    @Published var trackSelectorViewModel: TrackSelectorViewModel?
+    @Published var toolbarViewModel: ToolbarViewModel
+    
+    private var availableTracks: [MIDITrackInfo] = []
+    private var selectedTrackIndex: Int = 0
     
     init() {
         self.tabLines = [TabLine()]
@@ -45,10 +49,42 @@ class ContentViewModel: ObservableObject {
         let startOffset = startThinBarXPosition + timeSignatureWidth + spacing
         let initialPosition = Double(startOffset / screenWidth)
         self.playbackState = PlaybackState(tabLineIndex: 0, position: initialPosition)
+        
+        // Создаем ToolbarViewModel после инициализации всех stored properties
+        // Используем значения по умолчанию напрямую, без обращения к self
+        let defaultFret = TabFret(isSelected: false)
+        let defaultMeasureBar: MeasureBar? = nil
+        self.toolbarViewModel = ToolbarViewModel(selectedFret: defaultFret, selectedMeasureBar: defaultMeasureBar)
+        
+        // Теперь можем использовать все свойства для настройки
         self.playbackState.tempo = metadata.tempo
         self.playbackState.timeSignatureTop = metadata.sizeTop
         self.playbackState.timeSignatureBottom = metadata.sizeBottom
+        
+        // Настраиваем callbacks для ToolbarViewModel
+        setupToolbarCallbacks(for: toolbarViewModel)
+        
+        // Подписываемся на изменения для синхронизации с ToolbarViewModel
+        $selectedFret
+            .sink { [weak self] fret in
+                self?.toolbarViewModel.selectedFret = fret
+            }
+            .store(in: &cancellables)
+        
+        $selectedMeasureBar
+            .sink { [weak self] measureBar in
+                self?.toolbarViewModel.selectedMeasureBar = measureBar
+            }
+            .store(in: &cancellables)
+        
+        playbackState.$isPlaying
+            .sink { [weak self] isPlaying in
+                self?.toolbarViewModel.isPlaying = isPlaying
+            }
+            .store(in: &cancellables)
     }
+    
+    private var cancellables = Set<AnyCancellable>()
     
     func addTabLine() {
         let newLine = TabLine()
@@ -582,7 +618,18 @@ class ContentViewModel: ObservableObject {
             
             // Если треков больше одного, показываем диалог выбора
             if midiInfo.tracks.count > 1 {
-                availableTracks = midiInfo.tracks
+                // Создаем ViewModel для выбора трека
+                let trackSelectorVM = TrackSelectorViewModel(
+                    availableTracks: midiInfo.tracks,
+                    selectedTrackIndex: 0
+                )
+                trackSelectorVM.onTrackSelected = { [weak self] index in
+                    self?.selectedTrackIndex = index
+                }
+                trackSelectorVM.onConfirm = { [weak self] in
+                    self?.confirmTrackSelection()
+                }
+                trackSelectorViewModel = trackSelectorVM
                 selectedTrackIndex = 0
                 shouldShowTrackSelector = true
                 // Сохраняем информацию о файле для последующего импорта
@@ -637,6 +684,7 @@ class ContentViewModel: ObservableObject {
         guard let midiInfo = pendingMIDIInfo else { return }
         importSelectedTrack(midiInfo: midiInfo, trackIndex: selectedTrackIndex)
         shouldShowTrackSelector = false
+        trackSelectorViewModel = nil
         pendingMIDIInfo = nil
     }
 }

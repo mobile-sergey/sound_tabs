@@ -197,15 +197,21 @@ class TabLineViewModel: ObservableObject {
         // Берем тактовые линии из первой струны, так как они одинаковые для всех
         guard !tabLine.strings.isEmpty else { return [] }
         
-        // Если тактов нет, создаем их автоматически для всех позиций деления
+        // Если тактов нет, планируем их создание асинхронно, но возвращаем пустой массив
+        // чтобы не изменять @Published свойство во время обновления view
         if tabLine.strings[0].measureBars.isEmpty {
-            createDefaultMeasureBars()
+            // Планируем создание тактов асинхронно
+            DispatchQueue.main.async { [weak self] in
+                self?.createDefaultMeasureBarsSync()
+            }
+            // Возвращаем пустой массив, такты появятся после следующего обновления view
+            return []
         }
         
         return tabLine.strings[0].measureBars
     }
     
-    private func createDefaultMeasureBars() {
+    private func createDefaultMeasureBarsSync() {
         // Создаем такты для всех 8 позиций деления
         let divisions = 8
         let endOffset: CGFloat = 30
@@ -218,6 +224,9 @@ class TabLineViewModel: ObservableObject {
         let screenWidth: CGFloat = 375
         let availableWidth = screenWidth - startOffset - endOffset
         
+        // Создаем новый TabLine с обновленными measureBars, чтобы избежать изменения @Published свойства во время обновления view
+        var updatedStrings = tabLine.strings
+        
         for i in 0..<divisions {
             // Вычисляем нормализованную позицию (0.0 - 1.0)
             // Для 8 делений: 0, 1/7, 2/7, ..., 6/7, 1.0
@@ -226,36 +235,30 @@ class TabLineViewModel: ObservableObject {
             let finalPosition = (startOffset / screenWidth) + snappedPosition * (availableWidth / screenWidth)
             
             // Создаем такт на каждой позиции деления
-            for stringIndex in tabLine.strings.indices {
+            for stringIndex in updatedStrings.indices {
                 let measureBar = MeasureBar(
                     position: finalPosition,
                     isDouble: false,
                     measureDuration: nil, // Будет использоваться значение по умолчанию
                     isSelected: false
                 )
-                tabLine.strings[stringIndex].measureBars.append(measureBar)
+                updatedStrings[stringIndex].measureBars.append(measureBar)
             }
         }
         
-        // Обновляем данные в parentViewModel
-        if let lineIndex = parentViewModel?.tabLines.firstIndex(where: { $0.id == tabLine.id }) {
-            parentViewModel?.tabLines[lineIndex] = tabLine
+        // Создаем новый TabLine с обновленными данными
+        var updatedTabLine = tabLine
+        updatedTabLine.strings = updatedStrings
+        
+        // Обновляем данные напрямую, так как мы уже в async блоке
+        tabLine = updatedTabLine
+        if let lineIndex = parentViewModel?.tabLines.firstIndex(where: { $0.id == updatedTabLine.id }) {
+            parentViewModel?.tabLines[lineIndex] = updatedTabLine
         }
     }
     
-    func createPositionMarkersViewModel(
-        divisions: Int,
-        size: CGSize,
-        timeSignatureWidth: CGFloat = 0,
-        spacingAfterTimeSignature: CGFloat = 0
-    ) -> PositionMarkersViewModel {
-        let vm = PositionMarkersViewModel()
-        vm.divisions = divisions
-        vm.size = size
-        // Размер такта теперь внутри таба, учитываем его в маркерах
-        vm.timeSignatureWidth = timeSignatureWidth
-        vm.spacingAfterTimeSignature = spacingAfterTimeSignature
-        return vm
+    private func createDefaultMeasureBars() {
+        createDefaultMeasureBarsSync()
     }
     
     func createMeasureBarsViewModel(measureBars: [MeasureBar], size: CGSize) -> MeasureBarsViewModel {
