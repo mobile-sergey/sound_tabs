@@ -119,12 +119,20 @@ class PlaybackState: ObservableObject {
         isPlaying = false
         timer?.invalidate()
         timer = nil
+        // Останавливаем все звуки
+        Task { @MainActor in
+            GuitarSoundService.shared.stopAllNotes()
+        }
     }
     
     func pausePlayback() {
         isPlaying = false
         timer?.invalidate()
         timer = nil
+        // Останавливаем все звуки
+        Task { @MainActor in
+            GuitarSoundService.shared.stopAllNotes()
+        }
     }
     
     func resumePlayback(totalTabLines: Int, lastNoteTabIndex: Int, lastNotePosition: Double, onPositionUpdate: @escaping (PlaybackPosition) -> Void, onComplete: @escaping () -> Void) {

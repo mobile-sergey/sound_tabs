@@ -320,31 +320,189 @@ class ContentViewModel: ObservableObject {
         return nil
     }
     
+    private var lastPlayedPosition: (tabLineIndex: Int, position: Double)? = nil
+    private var playedNoteIds: Set<UUID> = [] // Отслеживаем уже проигранные ноты
+    
+    /// Проигрывает ноты на указанной позиции
+    private func playNotesAtPosition(_ position: PlaybackPosition) {
+        guard position.tabLineIndex >= 0 && position.tabLineIndex < tabLines.count else {
+            return
+        }
+        
+        let tabLine = tabLines[position.tabLineIndex]
+        // Увеличиваем tolerance для более надежного поиска нот
+        // Учитываем, что зеленая линия движется с шагом 1/8 таба
+        let stepSize = 1.0 / 8.0
+        let tolerance: Double = stepSize * 0.6 // 60% от шага - достаточно для надежного поиска
+        
+        // Находим все ноты в окрестности текущей позиции
+        var notesToPlay: [(stringIndex: Int, fret: TabFret)] = []
+        
+        for (stringIndex, string) in tabLine.strings.enumerated() {
+            for fret in string.frets {
+                // Проверяем, находится ли нота в окрестности текущей позиции
+                let distance = abs(fret.position - position.position)
+                if distance < tolerance {
+                    // Проверяем, не проигрывали ли мы уже эту ноту недавно
+                    // Разрешаем проиграть снова, если прошло достаточно времени
+                    if !playedNoteIds.contains(fret.id) {
+                        notesToPlay.append((stringIndex, fret))
+                    }
+                }
+            }
+        }
+        
+        // Если нашли ноты, проигрываем их
+        if !notesToPlay.isEmpty {
+            print("Найдено нот для проигрывания: \(notesToPlay.count) на позиции \(position.position)")
+            
+            // Находим measureDuration для текущей позиции
+            let measureDuration = getMeasureDurationAtPosition(position)
+            
+            // Вычисляем длительность звучания в секундах
+            let noteDuration = calculateNoteDuration(measureDuration: measureDuration)
+            
+            // Проигрываем все найденные ноты одновременно (полифония)
+            for (stringIndex, fret) in notesToPlay {
+                let midiNote = MIDIService.fretToMIDINote(stringIndex: stringIndex, fretNumber: fret.fretNumber)
+                print("Проигрывание ноты: string=\(stringIndex), fret=\(fret.fretNumber), MIDI=\(midiNote), position=\(fret.position)")
+                GuitarSoundService.shared.playNote(midiNote: midiNote, duration: noteDuration, velocity: 100)
+                
+                // Отмечаем, что эта нота была проиграна
+                playedNoteIds.insert(fret.id)
+                
+                // Удаляем из множества через некоторое время (после завершения звука)
+                // Это позволит проиграть ноту снова, если зеленая линия вернется к ней
+                DispatchQueue.main.asyncAfter(deadline: .now() + noteDuration + 0.1) { [weak self] in
+                    self?.playedNoteIds.remove(fret.id)
+                }
+            }
+        }
+        
+        // Обновляем последнюю позицию только после обработки всех нот
+        lastPlayedPosition = (position.tabLineIndex, position.position)
+    }
+    
+    /// Получает measureDuration для указанной позиции
+    private func getMeasureDurationAtPosition(_ position: PlaybackPosition) -> MeasureDuration {
+        guard position.tabLineIndex >= 0 && position.tabLineIndex < tabLines.count else {
+            return MeasureDuration.fromTimeSignatureBottom(metadata.sizeBottom)
+        }
+        
+        let tabLine = tabLines[position.tabLineIndex]
+        
+        // Ищем ближайший measureBar к текущей позиции
+        var closestBar: MeasureBar?
+        var minDistance: Double = Double.infinity
+        
+        for string in tabLine.strings {
+            for bar in string.measureBars {
+                let distance = abs(bar.position - position.position)
+                if distance < minDistance {
+                    minDistance = distance
+                    closestBar = bar
+                }
+            }
+        }
+        
+        // Если нашли measureBar с measureDuration, используем его
+        if let bar = closestBar, let duration = bar.measureDuration {
+            return duration
+        }
+        
+        // Иначе используем длительность по умолчанию
+        return MeasureDuration.fromTimeSignatureBottom(metadata.sizeBottom)
+    }
+    
+    /// Вычисляет длительность звучания ноты в секундах на основе measureDuration
+    private func calculateNoteDuration(measureDuration: MeasureDuration) -> TimeInterval {
+        // BPM = beats per minute
+        // 1 доля = 60 / BPM секунд
+        let beatDuration = 60.0 / Double(playbackState.tempo)
+        
+        // measureDuration указывает, какая доля такта используется
+        // Например, 1/4 означает четверть такта
+        // Для размера 4/4: 1 такт = 4 четверти
+        // Для размера 3/8: 1 такт = 3 восьмых
+        
+        // Вычисляем длительность в долях такта
+        let durationInBeats: Double
+        switch measureDuration {
+        case .whole:
+            durationInBeats = Double(playbackState.timeSignatureTop) // Целая нота = весь такт
+        case .half:
+            durationInBeats = Double(playbackState.timeSignatureTop) / 2.0
+        case .quarter:
+            durationInBeats = Double(playbackState.timeSignatureTop) / 4.0
+        case .eighth:
+            durationInBeats = Double(playbackState.timeSignatureTop) / 8.0
+        case .sixteenth:
+            durationInBeats = Double(playbackState.timeSignatureTop) / 16.0
+        case .thirtySecond:
+            durationInBeats = Double(playbackState.timeSignatureTop) / 32.0
+        case .sixtyFourth:
+            durationInBeats = Double(playbackState.timeSignatureTop) / 64.0
+        }
+        
+        // Длительность в секундах
+        return beatDuration * durationInBeats
+    }
+    
     func togglePlayback() {
         if playbackState.isPlaying {
             playbackState.pausePlayback()
+            GuitarSoundService.shared.stopAllNotes()
+            lastPlayedPosition = nil // Сбрасываем последнюю позицию при паузе
+            playedNoteIds.removeAll() // Сбрасываем множество проигранных нот
         } else {
+            // Сбрасываем все перед стартом
+            lastPlayedPosition = nil
+            playedNoteIds.removeAll()
+            
+            // Определяем начальную позицию для воспроизведения
+            var startTabIndex = 0
+            var startPosition: Double = 0.0
+            
             // Если есть выделенная нота, начинаем воспроизведение с её позиции
-            // Позиция уже обновлена в selectFret, но на всякий случай обновим здесь тоже
             if selectedFret.isSelected {
                 // Находим таб, на котором находится выделенная нота
-                var foundTabIndex = playbackState.currentPosition.tabLineIndex
                 for (lineIndex, tabLine) in tabLines.enumerated() {
                     for string in tabLine.strings {
                         if string.frets.contains(where: { $0.id == selectedFret.id }) {
-                            foundTabIndex = lineIndex
+                            startTabIndex = lineIndex
+                            startPosition = selectedFret.position
                             break
                         }
                     }
                 }
-                // Обновляем позицию воспроизведения на позицию выделенной ноты
-                // Обновляем напрямую свойства, чтобы сохранить тот же id
-                playbackState.currentPosition.tabLineIndex = foundTabIndex
-                playbackState.currentPosition.position = selectedFret.position
-                // Триггерим обновление UI
-                playbackState.objectWillChange.send()
+            } else {
+                // Если нет выделенной ноты, начинаем с начала первого таба
+                // Находим первую ноту в первом табе
+                if !tabLines.isEmpty {
+                    var firstNotePosition: Double? = nil
+                    for string in tabLines[0].strings {
+                        for fret in string.frets {
+                            if firstNotePosition == nil || fret.position < firstNotePosition! {
+                                firstNotePosition = fret.position
+                            }
+                        }
+                    }
+                    startPosition = firstNotePosition ?? 0.0
+                }
             }
-            // Иначе используем текущую позицию воспроизведения (которая уже может быть обновлена)
+            
+            // ВСЕГДА сбрасываем позицию воспроизведения на начальную
+            // Это гарантирует одинаковое поведение при каждом запуске
+            playbackState.currentPosition.tabLineIndex = startTabIndex
+            playbackState.currentPosition.position = startPosition
+            playbackState.objectWillChange.send()
+            
+            print("Старт воспроизведения: tabIndex=\(startTabIndex), position=\(startPosition)")
+            
+            // Сразу проигрываем ноты на начальной позиции
+            // Это гарантирует, что первая нота будет проиграна
+            let initialPosition = PlaybackPosition(tabLineIndex: startTabIndex, position: startPosition)
+            playNotesAtPosition(initialPosition)
             
             // Находим последнюю ноту
             let lastNote = findLastNotePosition()
@@ -355,13 +513,13 @@ class ContentViewModel: ObservableObject {
                 totalTabLines: tabLines.count,
                 lastNoteTabIndex: lastTabIndex,
                 lastNotePosition: lastPosition,
-                onPositionUpdate: { _ in
-                    // Позиция уже обновлена в таймере через objectWillChange
-                    // Здесь просто синхронизируем, если нужно
-                    // Но лучше не обновлять, так как это может создать конфликт
+                onPositionUpdate: { [weak self] position in
+                    // Проигрываем ноты на текущей позиции
+                    self?.playNotesAtPosition(position)
                 },
                 onComplete: { [weak self] in
                     self?.playbackState.isPlaying = false
+                    GuitarSoundService.shared.stopAllNotes()
                 }
             )
         }
