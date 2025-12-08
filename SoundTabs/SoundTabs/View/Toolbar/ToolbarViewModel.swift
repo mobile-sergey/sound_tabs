@@ -14,18 +14,22 @@ import SwiftUI
 class ToolbarViewModel: ObservableObject {
     @Published var selectedFret: TabFret
     @Published var selectedMeasureBar: MeasureBar?
+    @Published var selectedRepeat: TabRepeat
     @Published var isPlaying: Bool = false
-    
+    @Published var isRepeatEnabled: Bool = false
+
     var onDeleteFret: (() -> Void)?
     var onUpdateFret: ((Int) -> Void)?
     var onUpdateMeasureDuration: ((MeasureDuration) -> Void)?
     var onTogglePlayPause: (() -> Void)?
     var onSave: (() -> Void)?
     var onLoad: (() -> Void)?
+    var onRepeat: (() -> Void)?
     
-    init(selectedFret: TabFret, selectedMeasureBar: MeasureBar? = nil) {
+    init(selectedFret: TabFret, selectedMeasureBar: MeasureBar? = nil, selectedRepeat: TabRepeat) {
         self.selectedFret = selectedFret
         self.selectedMeasureBar = selectedMeasureBar
+        self.selectedRepeat = selectedRepeat
     }
     
     func togglePlayPause() {
@@ -39,6 +43,11 @@ class ToolbarViewModel: ObservableObject {
     
     func load() {
         onLoad?()
+    }
+    
+    func toggleRepeat() {
+        isRepeatEnabled.toggle()
+        onRepeat?()
     }
     
     func deleteFret() {
