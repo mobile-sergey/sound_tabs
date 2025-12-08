@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import Combine
 
 /// ViewModel для одной строки табулатуры, управляющая обработкой тапов, созданием нот и созданием дочерних ViewModels.
 /// Обрабатывает взаимодействия пользователя с табом (тапы, двойные тапы) и создает ViewModels для струн и размера такта.
@@ -25,19 +26,47 @@ class TabLineViewModel: ObservableObject {
     var metadata: TabMetadata?
     var isFirstTab: Bool = false
     var timeSignatureWidth: CGFloat = 96 // Ширина размера такта: точки (8) + ширина 2-значного числа (80) + отступ (8)
+    var playbackState: PlaybackState?
+    private var cancellables = Set<AnyCancellable>()
     
     init(
         tabLine: TabLine,
         tabLineIndex: Int = 0,
         parentViewModel: ContentViewModel? = nil,
         metadata: TabMetadata? = nil,
-        isFirstTab: Bool = false
+        isFirstTab: Bool = false,
+        playbackState: PlaybackState? = nil
     ) {
         self.tabLine = tabLine
         self.tabLineIndex = tabLineIndex
         self.parentViewModel = parentViewModel
         self.metadata = metadata
         self.isFirstTab = isFirstTab
+        self.playbackState = playbackState
+        
+        // Подписываемся на изменения playbackState для обновления UI
+        if let playback = playbackState {
+            playback.$currentPosition
+                .sink { [weak self] _ in
+                    self?.objectWillChange.send()
+                }
+                .store(in: &cancellables)
+            
+            playback.$isPlaying
+                .sink { [weak self] _ in
+                    self?.objectWillChange.send()
+                }
+                .store(in: &cancellables)
+        }
+        
+        // Подписываемся на изменения selectedFret для обновления зелёной линии
+        if let parentVM = parentViewModel {
+            parentVM.$selectedFret
+                .sink { [weak self] _ in
+                    self?.objectWillChange.send()
+                }
+                .store(in: &cancellables)
+        }
     }
     
     func handleTap(at location: CGPoint, in geometry: GeometryProxy) {
@@ -167,7 +196,51 @@ class TabLineViewModel: ObservableObject {
     func getMeasureBars() -> [MeasureBar] {
         // Берем тактовые линии из первой струны, так как они одинаковые для всех
         guard !tabLine.strings.isEmpty else { return [] }
+        
+        // Если тактов нет, создаем их автоматически для всех позиций деления
+        if tabLine.strings[0].measureBars.isEmpty {
+            createDefaultMeasureBars()
+        }
+        
         return tabLine.strings[0].measureBars
+    }
+    
+    private func createDefaultMeasureBars() {
+        // Создаем такты для всех 8 позиций деления
+        let divisions = 8
+        let endOffset: CGFloat = 30
+        let startThinBarXPosition: CGFloat = 30
+        let timeSignatureOffset = timeSignatureWidth + 5
+        let startOffset = startThinBarXPosition + timeSignatureOffset
+        
+        // Используем примерную ширину экрана для вычисления позиций
+        // Позиции будут нормализованы относительно ширины таба (0.0 - 1.0)
+        let screenWidth: CGFloat = 375
+        let availableWidth = screenWidth - startOffset - endOffset
+        
+        for i in 0..<divisions {
+            // Вычисляем нормализованную позицию (0.0 - 1.0)
+            // Для 8 делений: 0, 1/7, 2/7, ..., 6/7, 1.0
+            let snappedPosition = Double(i) / Double(max(1, divisions - 1))
+            // Нормализуем позицию с учетом отступов
+            let finalPosition = (startOffset / screenWidth) + snappedPosition * (availableWidth / screenWidth)
+            
+            // Создаем такт на каждой позиции деления
+            for stringIndex in tabLine.strings.indices {
+                let measureBar = MeasureBar(
+                    position: finalPosition,
+                    isDouble: false,
+                    measureDuration: nil, // Будет использоваться значение по умолчанию
+                    isSelected: false
+                )
+                tabLine.strings[stringIndex].measureBars.append(measureBar)
+            }
+        }
+        
+        // Обновляем данные в parentViewModel
+        if let lineIndex = parentViewModel?.tabLines.firstIndex(where: { $0.id == tabLine.id }) {
+            parentViewModel?.tabLines[lineIndex] = tabLine
+        }
     }
     
     func createPositionMarkersViewModel(
@@ -186,7 +259,13 @@ class TabLineViewModel: ObservableObject {
     }
     
     func createMeasureBarsViewModel(measureBars: [MeasureBar], size: CGSize) -> MeasureBarsViewModel {
-        let vm = MeasureBarsViewModel(measureBars: measureBars)
+        let defaultDuration = metadata.map { MeasureDuration.fromTimeSignatureBottom($0.sizeBottom) }
+        let vm = MeasureBarsViewModel(
+            measureBars: measureBars,
+            parentViewModel: parentViewModel,
+            tabLineId: tabLine.id,
+            defaultDuration: defaultDuration
+        )
         vm.size = size
         return vm
     }
@@ -215,6 +294,14 @@ class TabLineViewModel: ObservableObject {
                 self?.parentViewModel?.updateTimeSignature(top: top, bottom: bottom)
             },
             onFocusChange: onFocusChange
+        )
+    }
+    
+    func createPlaybackLineViewModel() -> PlaybackLineViewModel {
+        return PlaybackLineViewModel(
+            playbackState: playbackState,
+            parentViewModel: parentViewModel,
+            tabLineIndex: tabLineIndex
         )
     }
     

@@ -12,10 +12,11 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = ContentViewModel()
     @StateObject private var toolbarViewModel: ToolbarViewModel
+    @State private var showMIDIPicker = false
     
     init() {
         let contentVM = ContentViewModel()
-        let toolbarVM = ToolbarViewModel(selectedFret: contentVM.selectedFret)
+        let toolbarVM = ToolbarViewModel(selectedFret: contentVM.selectedFret, selectedMeasureBar: contentVM.selectedMeasureBar)
         _viewModel = StateObject(wrappedValue: contentVM)
         _toolbarViewModel = StateObject(wrappedValue: toolbarVM)
     }
@@ -26,6 +27,20 @@ struct ContentView: View {
             
             scrollSection
         }
+        .sheet(isPresented: $showMIDIPicker) {
+            MIDIFilePicker(isPresented: $showMIDIPicker) { url in
+                viewModel.importMIDIFile(from: url)
+            }
+        }
+        .sheet(isPresented: $viewModel.shouldShowTrackSelector) {
+            TrackSelectorView(viewModel: viewModel)
+        }
+        .onChange(of: viewModel.shouldShowMIDIPicker) { shouldShow in
+            if shouldShow {
+                showMIDIPicker = true
+                viewModel.shouldShowMIDIPicker = false
+            }
+        }
     }
     
     private var toolbarSection: some View {
@@ -35,6 +50,12 @@ struct ContentView: View {
             }
             .onChange(of: viewModel.selectedFret) { _ in
                 toolbarViewModel.selectedFret = viewModel.selectedFret
+            }
+            .onChange(of: viewModel.selectedMeasureBar) { _ in
+                toolbarViewModel.selectedMeasureBar = viewModel.selectedMeasureBar
+            }
+            .onChange(of: viewModel.playbackState.isPlaying) { isPlaying in
+                toolbarViewModel.isPlaying = isPlaying
             }
     }
     

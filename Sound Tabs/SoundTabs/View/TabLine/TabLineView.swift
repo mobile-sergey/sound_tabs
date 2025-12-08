@@ -62,6 +62,12 @@ struct TabLineView: View {
                 TabEndBarsView(
                     viewModel: TabEndBarsViewModel(size: geometry.size)
                 )
+                
+                // Зелёная вертикальная линия для выделения ноты или воспроизведения
+                PlaybackLineView(
+                    viewModel: viewModel.createPlaybackLineViewModel(),
+                    geometry: geometry
+                )
             }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
@@ -83,7 +89,7 @@ struct TabLineView: View {
                     }
             )
         }
-        .frame(height: 180) // 6 струн * 30
+        .frame(height: 200) // 6 струн * 30 + место для цифр такта внизу
         .background(Color(.systemBackground)) // Адаптируется к темному/светлому режиму
     }
 }

@@ -13,12 +13,32 @@ import SwiftUI
 @MainActor
 class ToolbarViewModel: ObservableObject {
     @Published var selectedFret: TabFret
+    @Published var selectedMeasureBar: MeasureBar?
+    @Published var isPlaying: Bool = false
     
     var onDeleteFret: (() -> Void)?
     var onUpdateFret: ((Int) -> Void)?
+    var onUpdateMeasureDuration: ((MeasureDuration) -> Void)?
+    var onTogglePlayPause: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onLoad: (() -> Void)?
     
-    init(selectedFret: TabFret) {
+    init(selectedFret: TabFret, selectedMeasureBar: MeasureBar? = nil) {
         self.selectedFret = selectedFret
+        self.selectedMeasureBar = selectedMeasureBar
+    }
+    
+    func togglePlayPause() {
+        isPlaying.toggle()
+        onTogglePlayPause?()
+    }
+    
+    func save() {
+        onSave?()
+    }
+    
+    func load() {
+        onLoad?()
     }
     
     func deleteFret() {
@@ -29,20 +49,32 @@ class ToolbarViewModel: ObservableObject {
         onUpdateFret?(fretNumber)
     }
     
+    func updateMeasureDuration(_ duration: MeasureDuration) {
+        onUpdateMeasureDuration?(duration)
+    }
+    
     func isFretNumberSelected(_ fretNumber: Int) -> Bool {
         selectedFret.fretNumber == fretNumber
     }
     
+    func isMeasureDurationSelected(_ duration: MeasureDuration) -> Bool {
+        selectedMeasureBar?.measureDuration == duration
+    }
+    
     var deleteButtonColor: Color {
-        selectedFret.isSelected ? .red : .gray
+        (selectedFret.isSelected || selectedMeasureBar != nil) ? .red : .gray
     }
     
     var isDeleteButtonDisabled: Bool {
-        !selectedFret.isSelected
+        !selectedFret.isSelected && selectedMeasureBar == nil
     }
     
     var shouldShowFretSelector: Bool {
-        selectedFret.isSelected
+        selectedFret.isSelected && selectedMeasureBar == nil
+    }
+    
+    var shouldShowMeasureDurationSelector: Bool {
+        selectedMeasureBar != nil
     }
 }
 
